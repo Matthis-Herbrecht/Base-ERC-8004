@@ -1,0 +1,31 @@
+{
+  "type": "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
+  "name": "BaseTokenScout",
+  "description": "AI agent analyzing token quality and safety on Base L2. Provides risk scores, detects scams, and tracks trending tokens. Read-only, no fund management.",
+  "image": "https://basetokenscout.onrender.com/static/logo.png",
+  "services": [
+    {
+      "name": "api",
+      "endpoint": "https://basetokenscout.onrender.com/analyze"
+    },
+    {
+      "name": "docs",
+      "endpoint": "https://basetokenscout.onrender.com/docs"
+    },
+    {
+      "name": "health",
+      "endpoint": "https://basetokenscout.onrender.com/health"
+    }
+  ],
+  "capabilities": [
+    "token-analysis",
+    "risk-assessment",
+    "trend-detection"
+  ],
+  "tags": ["defi", "security", "analytics", "base"],
+  "version": "1.0.0",
+  "chain": {
+    "id": 8453,
+    "name": "Base"
+  }
+}
