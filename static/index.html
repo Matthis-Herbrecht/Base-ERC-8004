@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BaseTokenScout - Analyse de Tokens</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #fff;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            text-align: center;
+            padding: 40px 0;
+        }
+
+        .logo {
+            font-size: 3rem;
+            margin-bottom: 10px;
+        }
+
+        h1 {
+            font-size: 2rem;
+            margin-bottom: 10px;
+            background: linear-gradient(90deg, #00d4ff, #7b2cbf);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .subtitle {
+            color: #888;
+            font-size: 1rem;
+        }
+
+        .search-box {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 30px;
+            margin: 30px 0;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .search-box h2 {
+            margin-bottom: 20px;
+            font-size: 1.2rem;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+        }
+
+        input[type="text"] {
+            flex: 1;
+            padding: 15px 20px;
+            border: none;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+            font-size: 1rem;
+            outline: none;
+            transition: all 0.3s;
+        }
+
+        input[type="text"]:focus {
+            background: rgba(255, 255, 255, 0.15);
+            box-shadow: 0 0 0 2px #00d4ff;
+        }
+
+        input[type="text"]::placeholder {
+            color: #666;
+        }
+
+        button {
+            padding: 15px 30px;
+            border: none;
+            border-radius: 10px;
+            background: linear-gradient(90deg, #00d4ff, #7b2cbf);
+            color: #fff;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(0, 212, 255, 0.4);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .quick-tokens {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .quick-token {
+            padding: 8px 16px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .quick-token:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .result-card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 30px;
+            margin: 30px 0;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            display: none;
+        }
+
+        .result-card.visible {
+            display: block;
+            animation: fadeIn 0.5s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .token-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 25px;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .token-info h3 {
+            font-size: 1.5rem;
+            margin-bottom: 5px;
+        }
+
+        .token-info .symbol {
+            color: #888;
+            font-size: 1rem;
+        }
+
+        .score-badge {
+            padding: 15px 25px;
+            border-radius: 12px;
+            text-align: center;
+        }
+
+        .score-badge .score {
+            font-size: 2.5rem;
+            font-weight: 700;
+        }
+
+        .score-badge .label {
+            font-size: 0.85rem;
+            margin-top: 5px;
+            text-transform: uppercase;
+        }
+
+        .score-quality { background: linear-gradient(135deg, #00c853, #00e676); }
+        .score-moderate { background: linear-gradient(135deg, #ff9800, #ffc107); }
+        .score-high_risk { background: linear-gradient(135deg, #ff5722, #ff9800); }
+        .score-scam { background: linear-gradient(135deg, #d32f2f, #ff5722); }
+
+        .risk-level {
+            display: inline-block;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin-top: 10px;
+        }
+
+        .risk-quality { background: rgba(0, 200, 83, 0.2); color: #00e676; }
+        .risk-moderate { background: rgba(255, 152, 0, 0.2); color: #ffc107; }
+        .risk-high_risk { background: rgba(255, 87, 34, 0.2); color: #ff9800; }
+        .risk-scam { background: rgba(211, 47, 47, 0.2); color: #ff5722; }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin: 25px 0;
+        }
+
+        .metric-card {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+        }
+
+        .metric-card .value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #00d4ff;
+        }
+
+        .metric-card .label {
+            font-size: 0.85rem;
+            color: #888;
+            margin-top: 5px;
+        }
+
+        .red-flags {
+            margin-top: 20px;
+        }
+
+        .red-flags h4 {
+            margin-bottom: 15px;
+            color: #ff5722;
+        }
+
+        .flag {
+            background: rgba(255, 87, 34, 0.1);
+            border-left: 3px solid #ff5722;
+            padding: 12px 15px;
+            margin-bottom: 10px;
+            border-radius: 0 8px 8px 0;
+        }
+
+        .flag.severity-high { border-color: #d32f2f; background: rgba(211, 47, 47, 0.1); }
+        .flag.severity-medium { border-color: #ff9800; background: rgba(255, 152, 0, 0.1); }
+        .flag.severity-low { border-color: #ffc107; background: rgba(255, 193, 7, 0.1); }
+
+        .analysis-text {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 20px;
+            border-radius: 12px;
+            margin-top: 20px;
+            line-height: 1.6;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-top-color: #00d4ff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .error {
+            background: rgba(211, 47, 47, 0.2);
+            border: 1px solid #d32f2f;
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+        }
+
+        footer {
+            text-align: center;
+            padding: 40px 0;
+            color: #666;
+            font-size: 0.85rem;
+        }
+
+        footer a {
+            color: #00d4ff;
+            text-decoration: none;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            background: rgba(0, 212, 255, 0.2);
+            color: #00d4ff;
+            margin-left: 10px;
+        }
+
+        @media (max-width: 600px) {
+            .input-group {
+                flex-direction: column;
+            }
+
+            .token-header {
+                flex-direction: column;
+                text-align: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">🔍</div>
+            <h1>BaseTokenScout</h1>
+            <p class="subtitle">Agent IA d'analyse de tokens sur Base L2</p>
+            <span class="badge">ERC-8004</span>
+        </header>
+
+        <div class="search-box">
+            <h2>Analyser un token</h2>
+            <div class="input-group">
+                <input
+                    type="text"
+                    id="tokenAddress"
+                    placeholder="Entrez l'adresse du token (0x...)"
+                >
+                <button id="analyzeBtn" onclick="analyzeToken()">Analyser</button>
+            </div>
+            <div class="quick-tokens">
+                <span>Tokens populaires :</span>
+                <span class="quick-token" onclick="setToken('0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913')">USDC</span>
+                <span class="quick-token" onclick="setToken('0x4200000000000000000000000000000000000006')">WETH</span>
+                <span class="quick-token" onclick="setToken('0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb')">DAI</span>
+                <span class="quick-token" onclick="setToken('0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22')">cbETH</span>
+            </div>
+        </div>
+
+        <div id="loadingCard" class="result-card">
+            <div class="loading">
+                <div class="spinner"></div>
+                <p>Analyse en cours...</p>
+            </div>
+        </div>
+
+        <div id="errorCard" class="result-card">
+            <div class="error">
+                <h3>Erreur</h3>
+                <p id="errorMessage"></p>
+            </div>
+        </div>
+
+        <div id="resultCard" class="result-card">
+            <div class="token-header">
+                <div class="token-info">
+                    <h3><span id="tokenName">-</span> <span class="symbol">(<span id="tokenSymbol">-</span>)</span></h3>
+                    <code id="tokenAddress2" style="color: #888; font-size: 0.8rem;"></code>
+                    <div>
+                        <span id="riskLevel" class="risk-level">-</span>
+                    </div>
+                </div>
+                <div id="scoreBadge" class="score-badge">
+                    <div class="score"><span id="scoreValue">-</span></div>
+                    <div class="label">Score</div>
+                </div>
+            </div>
+
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="value" id="holders">-</div>
+                    <div class="label">Holders</div>
+                </div>
+                <div class="metric-card">
+                    <div class="value" id="liquidity">-</div>
+                    <div class="label">Liquidite</div>
+                </div>
+                <div class="metric-card">
+                    <div class="value" id="volume">-</div>
+                    <div class="label">Volume 24h</div>
+                </div>
+                <div class="metric-card">
+                    <div class="value" id="age">-</div>
+                    <div class="label">Age (jours)</div>
+                </div>
+                <div class="metric-card">
+                    <div class="value" id="verified">-</div>
+                    <div class="label">Verifie</div>
+                </div>
+                <div class="metric-card">
+                    <div class="value" id="concentration">-</div>
+                    <div class="label">Top Holder</div>
+                </div>
+            </div>
+
+            <div id="redFlagsSection" class="red-flags" style="display: none;">
+                <h4>Alertes detectees</h4>
+                <div id="redFlagsList"></div>
+            </div>
+
+            <div class="analysis-text">
+                <strong>Analyse :</strong>
+                <p id="analysisText">-</p>
+            </div>
+        </div>
+
+        <footer>
+            <p>BaseTokenScout - Agent ERC-8004 sur Base L2</p>
+            <p>Read-only | Pas de gestion de fonds | <a href="/docs">Documentation API</a></p>
+        </footer>
+    </div>
+
+    <script>
+        function setToken(address) {
+            document.getElementById('tokenAddress').value = address;
+            analyzeToken();
+        }
+
+        function formatNumber(num) {
+            if (num >= 1000000000) return (num / 1000000000).toFixed(1) + 'B';
+            if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+            if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+            return num.toLocaleString();
+        }
+
+        function formatUSD(num) {
+            if (num >= 1000000000) return '$' + (num / 1000000000).toFixed(1) + 'B';
+            if (num >= 1000000) return '$' + (num / 1000000).toFixed(1) + 'M';
+            if (num >= 1000) return '$' + (num / 1000).toFixed(1) + 'K';
+            return '$' + num.toLocaleString();
+        }
+
+        function getRiskLabel(level) {
+            const labels = {
+                'quality': 'Qualite',
+                'moderate': 'Modere',
+                'high_risk': 'Risque Eleve',
+                'scam': 'Possible Scam'
+            };
+            return labels[level] || level;
+        }
+
+        async function analyzeToken() {
+            const address = document.getElementById('tokenAddress').value.trim();
+
+            if (!address || !address.match(/^0x[a-fA-F0-9]{40}$/)) {
+                alert('Veuillez entrer une adresse valide (0x...)');
+                return;
+            }
+
+            // Show loading
+            document.getElementById('loadingCard').classList.add('visible');
+            document.getElementById('resultCard').classList.remove('visible');
+            document.getElementById('errorCard').classList.remove('visible');
+            document.getElementById('analyzeBtn').disabled = true;
+
+            try {
+                const response = await fetch(`/analyze/${address}`);
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.message || 'Erreur lors de l\'analyse');
+                }
+
+                // Update UI
+                document.getElementById('tokenName').textContent = data.name;
+                document.getElementById('tokenSymbol').textContent = data.symbol;
+                document.getElementById('tokenAddress2').textContent = data.address;
+                document.getElementById('scoreValue').textContent = data.score;
+
+                // Score badge color
+                const scoreBadge = document.getElementById('scoreBadge');
+                scoreBadge.className = 'score-badge score-' + data.risk_level;
+
+                // Risk level
+                const riskLevel = document.getElementById('riskLevel');
+                riskLevel.textContent = getRiskLabel(data.risk_level);
+                riskLevel.className = 'risk-level risk-' + data.risk_level;
+
+                // Metrics
+                document.getElementById('holders').textContent = formatNumber(data.metrics.holders);
+                document.getElementById('liquidity').textContent = formatUSD(data.metrics.liquidity_usd);
+                document.getElementById('volume').textContent = formatUSD(data.metrics.volume_24h_usd);
+                document.getElementById('age').textContent = data.metrics.contract_age_days;
+                document.getElementById('verified').textContent = data.metrics.is_verified ? 'Oui' : 'Non';
+                document.getElementById('concentration').textContent = data.metrics.top_holder_percentage.toFixed(1) + '%';
+
+                // Red flags
+                const redFlagsSection = document.getElementById('redFlagsSection');
+                const redFlagsList = document.getElementById('redFlagsList');
+                redFlagsList.innerHTML = '';
+
+                if (data.red_flags && data.red_flags.length > 0) {
+                    redFlagsSection.style.display = 'block';
+                    data.red_flags.forEach(flag => {
+                        const flagEl = document.createElement('div');
+                        flagEl.className = 'flag severity-' + flag.severity;
+                        flagEl.innerHTML = `<strong>${flag.code}</strong>: ${flag.description}`;
+                        redFlagsList.appendChild(flagEl);
+                    });
+                } else {
+                    redFlagsSection.style.display = 'none';
+                }
+
+                // Analysis text
+                document.getElementById('analysisText').textContent = data.analysis;
+
+                // Show result
+                document.getElementById('loadingCard').classList.remove('visible');
+                document.getElementById('resultCard').classList.add('visible');
+
+            } catch (error) {
+                document.getElementById('loadingCard').classList.remove('visible');
+                document.getElementById('errorMessage').textContent = error.message;
+                document.getElementById('errorCard').classList.add('visible');
+            }
+
+            document.getElementById('analyzeBtn').disabled = false;
+        }
+
+        // Allow Enter key to trigger analysis
+        document.getElementById('tokenAddress').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                analyzeToken();
+            }
+        });
+    </script>
+</body>
+</html>

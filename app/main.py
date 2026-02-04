@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -141,10 +141,22 @@ async def health_check(request: Request) -> HealthResponse:
     "/",
     tags=["Health"],
     summary="Root endpoint",
-    description="Welcome message and API info."
+    description="Web interface for token analysis.",
+    include_in_schema=False
 )
 async def root():
-    """Root endpoint with API info."""
+    """Serve the web interface."""
+    return FileResponse("static/index.html")
+
+
+@app.get(
+    "/api",
+    tags=["Health"],
+    summary="API info",
+    description="API information and endpoints."
+)
+async def api_info():
+    """API info endpoint."""
     settings = get_settings()
     return {
         "name": "BaseTokenScout",
