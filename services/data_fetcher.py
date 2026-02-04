@@ -1,4 +1,4 @@
-"""Data fetching service for external APIs (Basescan, CoinGecko, DEX)."""
+"""Data fetching service for external APIs (Etherscan V2, CoinGecko, DEX)."""
 
 import logging
 from typing import Optional, List, Dict, Any
@@ -20,200 +20,191 @@ class DataFetcher:
     def __init__(self):
         """Initialize data fetcher."""
         self.settings = get_settings()
-        self.basescan_base_url = "https://api.basescan.org/api"
+        # Use Etherscan V2 API with chainid for Base
+        self.etherscan_v2_url = "https://api.etherscan.io/v2/api"
+        self.chain_id = "8453"  # Base mainnet
         self.coingecko_base_url = "https://api.coingecko.com/api/v3"
 
     def _get_cache_key(self, prefix: str, *args) -> str:
         """Generate cache key."""
         return f"{prefix}:{':'.join(str(a) for a in args)}"
 
+    async def _make_etherscan_request(self, params: dict) -> dict:
+        """Make a request to Etherscan V2 API."""
+        params["chainid"] = self.chain_id
+        params["apikey"] = self.settings.basescan_api_key or ""
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(self.etherscan_v2_url, params=params)
+            return response.json()
+
     async def get_holder_count(self, token_address: str) -> int:
         """
         Get token holder count estimate from transfer events.
-        Note: tokenholderlist requires PRO API, so we estimate from transfers.
         """
         cache_key = self._get_cache_key("holders", token_address)
         if cache_key in _cache:
             return _cache[cache_key]
 
         try:
-            # Use transfer events to estimate unique holders
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                params = {
-                    "module": "account",
-                    "action": "tokentx",
-                    "contractaddress": token_address,
-                    "page": 1,
-                    "offset": 1000,  # Get more transfers for better estimate
-                    "sort": "desc",
-                    "apikey": self.settings.basescan_api_key or ""
-                }
+            params = {
+                "module": "account",
+                "action": "tokentx",
+                "contractaddress": token_address,
+                "page": 1,
+                "offset": 1000,
+                "sort": "desc",
+            }
 
-                logger.info(f"Fetching transfers for {token_address}")
-                response = await client.get(self.basescan_base_url, params=params)
-                data = response.json()
+            logger.info(f"Fetching transfers for {token_address}")
+            data = await self._make_etherscan_request(params)
 
-                logger.info(f"Transfer response status: {data.get('status')}, message: {data.get('message')}")
+            logger.info(f"Transfer response status: {data.get('status')}, message: {data.get('message')}")
 
-                if data.get("status") == "1" and data.get("result"):
-                    # Count unique addresses from transfers
-                    addresses = set()
-                    for tx in data.get("result", []):
-                        to_addr = tx.get("to", "").lower()
-                        from_addr = tx.get("from", "").lower()
-                        if to_addr and to_addr != "0x0000000000000000000000000000000000000000":
-                            addresses.add(to_addr)
-                        if from_addr and from_addr != "0x0000000000000000000000000000000000000000":
-                            addresses.add(from_addr)
+            if data.get("status") == "1" and data.get("result"):
+                # Count unique addresses from transfers
+                addresses = set()
+                for tx in data.get("result", []):
+                    to_addr = tx.get("to", "").lower()
+                    from_addr = tx.get("from", "").lower()
+                    if to_addr and to_addr != "0x0000000000000000000000000000000000000000":
+                        addresses.add(to_addr)
+                    if from_addr and from_addr != "0x0000000000000000000000000000000000000000":
+                        addresses.add(from_addr)
 
-                    count = len(addresses)
-                    logger.info(f"Estimated {count} holders from transfers")
-                    _cache[cache_key] = count
-                    return count
-                else:
-                    logger.warning(f"No transfer data: {data.get('message', 'Unknown error')}")
+                count = len(addresses)
+                logger.info(f"Estimated {count} holders from transfers")
+                _cache[cache_key] = count
+                return count
+            else:
+                logger.warning(f"No transfer data: {data.get('message', 'Unknown error')}")
 
-                return 0
+            return 0
         except Exception as e:
             logger.error(f"Failed to get holder count: {e}")
             return 0
 
     async def get_contract_creation_info(self, token_address: str) -> Optional[Dict[str, Any]]:
-        """Get contract creation info from Basescan."""
+        """Get contract creation info."""
         cache_key = self._get_cache_key("creation", token_address)
         if cache_key in _cache:
             return _cache[cache_key]
 
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                params = {
-                    "module": "contract",
-                    "action": "getcontractcreation",
-                    "contractaddresses": token_address,
-                    "apikey": self.settings.basescan_api_key or ""
-                }
+            params = {
+                "module": "contract",
+                "action": "getcontractcreation",
+                "contractaddresses": token_address,
+            }
 
-                logger.info(f"Fetching contract creation for {token_address}")
-                response = await client.get(self.basescan_base_url, params=params)
-                data = response.json()
+            logger.info(f"Fetching contract creation for {token_address}")
+            data = await self._make_etherscan_request(params)
 
-                logger.info(f"Contract creation response: {data.get('status')}, message: {data.get('message')}")
+            logger.info(f"Contract creation response: {data.get('status')}, message: {data.get('message')}")
 
-                if data.get("status") == "1" and data.get("result"):
-                    result = data["result"][0]
-                    _cache[cache_key] = result
-                    return result
-                else:
-                    logger.warning(f"No contract creation data: {data.get('message', 'Unknown')}")
+            if data.get("status") == "1" and data.get("result"):
+                result = data["result"][0]
+                _cache[cache_key] = result
+                return result
+            else:
+                logger.warning(f"No contract creation data: {data.get('message', 'Unknown')}")
 
-                return None
+            return None
         except Exception as e:
             logger.error(f"Failed to get contract creation info: {e}")
             return None
 
     async def is_contract_verified(self, token_address: str) -> bool:
-        """Check if contract is verified on Basescan."""
+        """Check if contract is verified."""
         cache_key = self._get_cache_key("verified", token_address)
         if cache_key in _cache:
             return _cache[cache_key]
 
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                params = {
-                    "module": "contract",
-                    "action": "getsourcecode",
-                    "address": token_address,
-                    "apikey": self.settings.basescan_api_key or ""
-                }
+            params = {
+                "module": "contract",
+                "action": "getsourcecode",
+                "address": token_address,
+            }
 
-                logger.info(f"Checking verification for {token_address}")
-                response = await client.get(self.basescan_base_url, params=params)
-                data = response.json()
+            logger.info(f"Checking verification for {token_address}")
+            data = await self._make_etherscan_request(params)
 
-                logger.info(f"Verification response: {data.get('status')}")
+            logger.info(f"Verification response status: {data.get('status')}")
 
-                if data.get("status") == "1" and data.get("result"):
-                    result = data["result"][0]
-                    source_code = result.get("SourceCode", "")
-                    is_verified = source_code != "" and source_code != "0"
-                    logger.info(f"Contract verified: {is_verified}")
-                    _cache[cache_key] = is_verified
-                    return is_verified
+            if data.get("status") == "1" and data.get("result"):
+                result = data["result"][0]
+                source_code = result.get("SourceCode", "")
+                is_verified = source_code != "" and source_code != "0"
+                logger.info(f"Contract verified: {is_verified}")
+                _cache[cache_key] = is_verified
+                return is_verified
 
-                return False
+            return False
         except Exception as e:
             logger.error(f"Failed to check contract verification: {e}")
             return False
 
     async def get_contract_age_days(self, token_address: str) -> int:
-        """Get contract age in days using first transfer or creation info."""
+        """Get contract age in days using first transfer."""
         cache_key = self._get_cache_key("age", token_address)
         if cache_key in _cache:
             return _cache[cache_key]
 
         try:
-            # Method 1: Try to get from contract creation
+            # Get first transfer to estimate contract age
+            params = {
+                "module": "account",
+                "action": "tokentx",
+                "contractaddress": token_address,
+                "page": 1,
+                "offset": 1,
+                "sort": "asc",
+            }
+
+            data = await self._make_etherscan_request(params)
+
+            if data.get("status") == "1" and data.get("result"):
+                first_tx = data["result"][0]
+                timestamp = int(first_tx.get("timeStamp", 0))
+                if timestamp > 0:
+                    creation_date = datetime.fromtimestamp(timestamp)
+                    age = (datetime.utcnow() - creation_date).days
+                    logger.info(f"Contract age: {age} days (from first transfer)")
+                    _cache[cache_key] = age
+                    return max(0, age)
+
+            # Fallback: try contract creation info
             creation_info = await self.get_contract_creation_info(token_address)
-
             if creation_info and creation_info.get("txHash"):
-                tx_hash = creation_info.get("txHash")
-
-                async with httpx.AsyncClient(timeout=15.0) as client:
-                    # Get transaction receipt for block number
-                    params = {
-                        "module": "proxy",
-                        "action": "eth_getTransactionReceipt",
-                        "txhash": tx_hash,
-                        "apikey": self.settings.basescan_api_key or ""
-                    }
-                    response = await client.get(self.basescan_base_url, params=params)
-                    data = response.json()
-
-                    if data.get("result") and data["result"].get("blockNumber"):
-                        block_number = int(data["result"]["blockNumber"], 16)
-
-                        # Get block timestamp
-                        params = {
-                            "module": "block",
-                            "action": "getblockreward",
-                            "blockno": block_number,
-                            "apikey": self.settings.basescan_api_key or ""
-                        }
-                        response = await client.get(self.basescan_base_url, params=params)
-                        block_data = response.json()
-
-                        if block_data.get("status") == "1" and block_data.get("result"):
-                            timestamp = int(block_data["result"].get("timeStamp", 0))
-                            if timestamp > 0:
-                                creation_date = datetime.fromtimestamp(timestamp)
-                                age = (datetime.utcnow() - creation_date).days
-                                logger.info(f"Contract age: {age} days (from creation)")
-                                _cache[cache_key] = age
-                                return max(0, age)
-
-            # Method 2: Fallback to first transfer
-            async with httpx.AsyncClient(timeout=15.0) as client:
+                # Get transaction details
                 params = {
-                    "module": "account",
-                    "action": "tokentx",
-                    "contractaddress": token_address,
-                    "page": 1,
-                    "offset": 1,
-                    "sort": "asc",  # Get oldest first
-                    "apikey": self.settings.basescan_api_key or ""
+                    "module": "proxy",
+                    "action": "eth_getTransactionByHash",
+                    "txhash": creation_info.get("txHash"),
                 }
-                response = await client.get(self.basescan_base_url, params=params)
-                data = response.json()
+                data = await self._make_etherscan_request(params)
 
-                if data.get("status") == "1" and data.get("result"):
-                    first_tx = data["result"][0]
-                    timestamp = int(first_tx.get("timeStamp", 0))
-                    if timestamp > 0:
-                        creation_date = datetime.fromtimestamp(timestamp)
-                        age = (datetime.utcnow() - creation_date).days
-                        logger.info(f"Contract age: {age} days (from first transfer)")
-                        _cache[cache_key] = age
-                        return max(0, age)
+                if data.get("result") and data["result"].get("blockNumber"):
+                    block_hex = data["result"]["blockNumber"]
+                    block_number = int(block_hex, 16)
+
+                    # Get block info
+                    params = {
+                        "module": "block",
+                        "action": "getblockreward",
+                        "blockno": block_number,
+                    }
+                    block_data = await self._make_etherscan_request(params)
+
+                    if block_data.get("status") == "1" and block_data.get("result"):
+                        timestamp = int(block_data["result"].get("timeStamp", 0))
+                        if timestamp > 0:
+                            creation_date = datetime.fromtimestamp(timestamp)
+                            age = (datetime.utcnow() - creation_date).days
+                            logger.info(f"Contract age: {age} days (from creation)")
+                            _cache[cache_key] = age
+                            return max(0, age)
 
             return 0
         except Exception as e:
@@ -222,7 +213,6 @@ class DataFetcher:
 
     async def get_top_holders(self, token_address: str, limit: int = 10) -> List[Dict[str, Any]]:
         """Get top token holders - requires PRO API."""
-        # This endpoint requires PRO API, return empty for free tier
         return []
 
     async def get_token_price_coingecko(self, token_address: str) -> Optional[float]:
