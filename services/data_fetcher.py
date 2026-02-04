@@ -247,7 +247,7 @@ class DataFetcher:
 
     async def get_dex_data(self, token_address: str) -> Dict[str, Any]:
         """
-        Get DEX data (liquidity, volume) for token.
+        Get DEX data (liquidity, volume, age) for token.
         Uses DexScreener API for DEX data.
         """
         cache_key = self._get_cache_key("dex", token_address)
@@ -267,6 +267,7 @@ class DataFetcher:
                         total_liquidity = 0
                         total_volume_24h = 0
                         price_usd = None
+                        oldest_pair_timestamp = None
 
                         for pair in pairs:
                             if pair.get("chainId") == "base":
@@ -275,21 +276,36 @@ class DataFetcher:
                                 if price_usd is None:
                                     price_usd = float(pair.get("priceUsd", 0) or 0)
 
+                                # Get pair creation timestamp (in milliseconds)
+                                pair_created = pair.get("pairCreatedAt")
+                                if pair_created:
+                                    if oldest_pair_timestamp is None or pair_created < oldest_pair_timestamp:
+                                        oldest_pair_timestamp = pair_created
+
+                        # Calculate age in days from oldest pair
+                        age_days = 0
+                        if oldest_pair_timestamp:
+                            creation_date = datetime.fromtimestamp(oldest_pair_timestamp / 1000)
+                            age_days = (datetime.utcnow() - creation_date).days
+                            logger.info(f"Token age from DEX: {age_days} days")
+
                         result = {
                             "liquidity_usd": total_liquidity,
                             "volume_24h_usd": total_volume_24h,
                             "price_usd": price_usd,
-                            "pairs_count": len([p for p in pairs if p.get("chainId") == "base"])
+                            "pairs_count": len([p for p in pairs if p.get("chainId") == "base"]),
+                            "age_days": age_days
                         }
                         _cache[cache_key] = result
-                        logger.info(f"DEX data: liquidity=${total_liquidity}, volume=${total_volume_24h}")
+                        logger.info(f"DEX data: liquidity=${total_liquidity}, volume=${total_volume_24h}, age={age_days}d")
                         return result
 
                 return {
                     "liquidity_usd": 0,
                     "volume_24h_usd": 0,
                     "price_usd": None,
-                    "pairs_count": 0
+                    "pairs_count": 0,
+                    "age_days": 0
                 }
         except Exception as e:
             logger.error(f"Failed to get DEX data: {e}")
@@ -297,7 +313,8 @@ class DataFetcher:
                 "liquidity_usd": 0,
                 "volume_24h_usd": 0,
                 "price_usd": None,
-                "pairs_count": 0
+                "pairs_count": 0,
+                "age_days": 0
             }
 
 

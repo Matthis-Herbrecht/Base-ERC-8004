@@ -66,6 +66,10 @@ class TokenAnalyzer:
         dex_data = await self.data_fetcher.get_dex_data(checksum_address)
         top_holders = await self.data_fetcher.get_top_holders(checksum_address, limit=10)
 
+        # Use DEX age as fallback if contract age is 0
+        if contract_age == 0:
+            contract_age = dex_data.get("age_days", 0)
+
         # Calculate top holder percentage
         top_holder_percentage = self._calculate_top_holder_percentage(
             top_holders, token_info["total_supply"], token_info["decimals"]
