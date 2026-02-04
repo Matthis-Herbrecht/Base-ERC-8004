@@ -10,11 +10,16 @@ SECURITY: This agent is READ-ONLY. No automatic transactions.
 import logging
 from datetime import datetime
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, FileResponse
+
+# Get the base directory (project root)
+BASE_DIR = Path(__file__).resolve().parent.parent
+STATIC_DIR = BASE_DIR / "static"
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -109,9 +114,9 @@ async def track_analyses(request: Request, call_next):
 
 # Mount static files
 try:
-    app.mount("/static", StaticFiles(directory="static"), name="static")
-except Exception:
-    logger.warning("Static files directory not found. Creating placeholder...")
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+except Exception as e:
+    logger.warning(f"Static files directory not found: {e}")
 
 
 # Include routers
@@ -146,7 +151,7 @@ async def health_check(request: Request) -> HealthResponse:
 )
 async def root():
     """Serve the web interface."""
-    return FileResponse("static/index.html")
+    return FileResponse(STATIC_DIR / "index.html")
 
 
 @app.get(
