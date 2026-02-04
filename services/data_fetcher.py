@@ -1,9 +1,8 @@
 """Data fetching service for external APIs (Basescan, CoinGecko, DEX)."""
 
 import logging
-import time
 from typing import Optional, List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime
 import httpx
 from cachetools import TTLCache
 
@@ -30,70 +29,53 @@ class DataFetcher:
 
     async def get_holder_count(self, token_address: str) -> int:
         """
-        Get token holder count from Basescan.
-
-        Note: Basescan API has limited holder info, so we estimate from transfers.
+        Get token holder count estimate from transfer events.
+        Note: tokenholderlist requires PRO API, so we estimate from transfers.
         """
         cache_key = self._get_cache_key("holders", token_address)
         if cache_key in _cache:
             return _cache[cache_key]
 
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                # Get token transfer events to estimate holders
-                params = {
-                    "module": "token",
-                    "action": "tokenholderlist",
-                    "contractaddress": token_address,
-                    "page": 1,
-                    "offset": 1,
-                    "apikey": self.settings.basescan_api_key
-                }
-                response = await client.get(self.basescan_base_url, params=params)
-                data = response.json()
-
-                if data.get("status") == "1" and data.get("result"):
-                    # Get approximate holder count from transfer count
-                    count = len(data.get("result", []))
-                    _cache[cache_key] = count
-                    return count
-
-                # Fallback: estimate from transfer events
-                return await self._estimate_holders_from_transfers(token_address)
-
-        except Exception as e:
-            logger.error(f"Failed to get holder count: {e}")
-            return 0
-
-    async def _estimate_holders_from_transfers(self, token_address: str) -> int:
-        """Estimate holder count from transfer events."""
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            # Use transfer events to estimate unique holders
+            async with httpx.AsyncClient(timeout=15.0) as client:
                 params = {
                     "module": "account",
                     "action": "tokentx",
                     "contractaddress": token_address,
                     "page": 1,
-                    "offset": 100,
+                    "offset": 1000,  # Get more transfers for better estimate
                     "sort": "desc",
-                    "apikey": self.settings.basescan_api_key
+                    "apikey": self.settings.basescan_api_key or ""
                 }
+
+                logger.info(f"Fetching transfers for {token_address}")
                 response = await client.get(self.basescan_base_url, params=params)
                 data = response.json()
 
+                logger.info(f"Transfer response status: {data.get('status')}, message: {data.get('message')}")
+
                 if data.get("status") == "1" and data.get("result"):
-                    # Count unique addresses
+                    # Count unique addresses from transfers
                     addresses = set()
                     for tx in data.get("result", []):
-                        addresses.add(tx.get("to", "").lower())
-                        addresses.add(tx.get("from", "").lower())
-                    addresses.discard("")
-                    addresses.discard("0x0000000000000000000000000000000000000000")
-                    return len(addresses)
+                        to_addr = tx.get("to", "").lower()
+                        from_addr = tx.get("from", "").lower()
+                        if to_addr and to_addr != "0x0000000000000000000000000000000000000000":
+                            addresses.add(to_addr)
+                        if from_addr and from_addr != "0x0000000000000000000000000000000000000000":
+                            addresses.add(from_addr)
+
+                    count = len(addresses)
+                    logger.info(f"Estimated {count} holders from transfers")
+                    _cache[cache_key] = count
+                    return count
+                else:
+                    logger.warning(f"No transfer data: {data.get('message', 'Unknown error')}")
 
                 return 0
         except Exception as e:
-            logger.error(f"Failed to estimate holders: {e}")
+            logger.error(f"Failed to get holder count: {e}")
             return 0
 
     async def get_contract_creation_info(self, token_address: str) -> Optional[Dict[str, Any]]:
@@ -103,20 +85,26 @@ class DataFetcher:
             return _cache[cache_key]
 
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=15.0) as client:
                 params = {
                     "module": "contract",
                     "action": "getcontractcreation",
                     "contractaddresses": token_address,
-                    "apikey": self.settings.basescan_api_key
+                    "apikey": self.settings.basescan_api_key or ""
                 }
+
+                logger.info(f"Fetching contract creation for {token_address}")
                 response = await client.get(self.basescan_base_url, params=params)
                 data = response.json()
+
+                logger.info(f"Contract creation response: {data.get('status')}, message: {data.get('message')}")
 
                 if data.get("status") == "1" and data.get("result"):
                     result = data["result"][0]
                     _cache[cache_key] = result
                     return result
+                else:
+                    logger.warning(f"No contract creation data: {data.get('message', 'Unknown')}")
 
                 return None
         except Exception as e:
@@ -130,19 +118,25 @@ class DataFetcher:
             return _cache[cache_key]
 
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=15.0) as client:
                 params = {
                     "module": "contract",
                     "action": "getsourcecode",
                     "address": token_address,
-                    "apikey": self.settings.basescan_api_key
+                    "apikey": self.settings.basescan_api_key or ""
                 }
+
+                logger.info(f"Checking verification for {token_address}")
                 response = await client.get(self.basescan_base_url, params=params)
                 data = response.json()
 
+                logger.info(f"Verification response: {data.get('status')}")
+
                 if data.get("status") == "1" and data.get("result"):
                     result = data["result"][0]
-                    is_verified = result.get("SourceCode", "") != ""
+                    source_code = result.get("SourceCode", "")
+                    is_verified = source_code != "" and source_code != "0"
+                    logger.info(f"Contract verified: {is_verified}")
                     _cache[cache_key] = is_verified
                     return is_verified
 
@@ -152,80 +146,84 @@ class DataFetcher:
             return False
 
     async def get_contract_age_days(self, token_address: str) -> int:
-        """Get contract age in days."""
-        creation_info = await self.get_contract_creation_info(token_address)
-        if not creation_info:
-            return 0
-
-        try:
-            # Get creation transaction to find timestamp
-            tx_hash = creation_info.get("txHash")
-            if not tx_hash:
-                return 0
-
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                params = {
-                    "module": "proxy",
-                    "action": "eth_getTransactionByHash",
-                    "txhash": tx_hash,
-                    "apikey": self.settings.basescan_api_key
-                }
-                response = await client.get(self.basescan_base_url, params=params)
-                data = response.json()
-
-                if data.get("result"):
-                    block_number = int(data["result"].get("blockNumber", "0x0"), 16)
-
-                    # Get block timestamp
-                    params = {
-                        "module": "proxy",
-                        "action": "eth_getBlockByNumber",
-                        "tag": hex(block_number),
-                        "boolean": "false",
-                        "apikey": self.settings.basescan_api_key
-                    }
-                    response = await client.get(self.basescan_base_url, params=params)
-                    block_data = response.json()
-
-                    if block_data.get("result"):
-                        timestamp = int(block_data["result"].get("timestamp", "0x0"), 16)
-                        creation_date = datetime.fromtimestamp(timestamp)
-                        age = datetime.utcnow() - creation_date
-                        return max(0, age.days)
-
-                return 0
-        except Exception as e:
-            logger.error(f"Failed to get contract age: {e}")
-            return 0
-
-    async def get_top_holders(self, token_address: str, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get top token holders."""
-        cache_key = self._get_cache_key("top_holders", token_address, limit)
+        """Get contract age in days using first transfer or creation info."""
+        cache_key = self._get_cache_key("age", token_address)
         if cache_key in _cache:
             return _cache[cache_key]
 
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            # Method 1: Try to get from contract creation
+            creation_info = await self.get_contract_creation_info(token_address)
+
+            if creation_info and creation_info.get("txHash"):
+                tx_hash = creation_info.get("txHash")
+
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    # Get transaction receipt for block number
+                    params = {
+                        "module": "proxy",
+                        "action": "eth_getTransactionReceipt",
+                        "txhash": tx_hash,
+                        "apikey": self.settings.basescan_api_key or ""
+                    }
+                    response = await client.get(self.basescan_base_url, params=params)
+                    data = response.json()
+
+                    if data.get("result") and data["result"].get("blockNumber"):
+                        block_number = int(data["result"]["blockNumber"], 16)
+
+                        # Get block timestamp
+                        params = {
+                            "module": "block",
+                            "action": "getblockreward",
+                            "blockno": block_number,
+                            "apikey": self.settings.basescan_api_key or ""
+                        }
+                        response = await client.get(self.basescan_base_url, params=params)
+                        block_data = response.json()
+
+                        if block_data.get("status") == "1" and block_data.get("result"):
+                            timestamp = int(block_data["result"].get("timeStamp", 0))
+                            if timestamp > 0:
+                                creation_date = datetime.fromtimestamp(timestamp)
+                                age = (datetime.utcnow() - creation_date).days
+                                logger.info(f"Contract age: {age} days (from creation)")
+                                _cache[cache_key] = age
+                                return max(0, age)
+
+            # Method 2: Fallback to first transfer
+            async with httpx.AsyncClient(timeout=15.0) as client:
                 params = {
-                    "module": "token",
-                    "action": "tokenholderlist",
+                    "module": "account",
+                    "action": "tokentx",
                     "contractaddress": token_address,
                     "page": 1,
-                    "offset": limit,
-                    "apikey": self.settings.basescan_api_key
+                    "offset": 1,
+                    "sort": "asc",  # Get oldest first
+                    "apikey": self.settings.basescan_api_key or ""
                 }
                 response = await client.get(self.basescan_base_url, params=params)
                 data = response.json()
 
                 if data.get("status") == "1" and data.get("result"):
-                    holders = data.get("result", [])
-                    _cache[cache_key] = holders
-                    return holders
+                    first_tx = data["result"][0]
+                    timestamp = int(first_tx.get("timeStamp", 0))
+                    if timestamp > 0:
+                        creation_date = datetime.fromtimestamp(timestamp)
+                        age = (datetime.utcnow() - creation_date).days
+                        logger.info(f"Contract age: {age} days (from first transfer)")
+                        _cache[cache_key] = age
+                        return max(0, age)
 
-                return []
+            return 0
         except Exception as e:
-            logger.error(f"Failed to get top holders: {e}")
-            return []
+            logger.error(f"Failed to get contract age: {e}")
+            return 0
+
+    async def get_top_holders(self, token_address: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get top token holders - requires PRO API."""
+        # This endpoint requires PRO API, return empty for free tier
+        return []
 
     async def get_token_price_coingecko(self, token_address: str) -> Optional[float]:
         """Get token price from CoinGecko."""
@@ -235,7 +233,6 @@ class DataFetcher:
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                # CoinGecko uses base network for Base chain
                 url = f"{self.coingecko_base_url}/simple/token_price/base"
                 params = {
                     "contract_addresses": token_address.lower(),
@@ -261,7 +258,6 @@ class DataFetcher:
     async def get_dex_data(self, token_address: str) -> Dict[str, Any]:
         """
         Get DEX data (liquidity, volume) for token.
-
         Uses DexScreener API for DEX data.
         """
         cache_key = self._get_cache_key("dex", token_address)
@@ -270,7 +266,6 @@ class DataFetcher:
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                # DexScreener API for Base
                 url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
                 response = await client.get(url)
 
@@ -279,7 +274,6 @@ class DataFetcher:
                     pairs = data.get("pairs", [])
 
                     if pairs:
-                        # Aggregate data from all pairs
                         total_liquidity = 0
                         total_volume_24h = 0
                         price_usd = None
@@ -298,6 +292,7 @@ class DataFetcher:
                             "pairs_count": len([p for p in pairs if p.get("chainId") == "base"])
                         }
                         _cache[cache_key] = result
+                        logger.info(f"DEX data: liquidity=${total_liquidity}, volume=${total_volume_24h}")
                         return result
 
                 return {
