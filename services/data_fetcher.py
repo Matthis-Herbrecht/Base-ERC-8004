@@ -58,7 +58,9 @@ class DataFetcher:
 
                 if response.status_code == 200:
                     data = response.json()
-                    count = int(data.get("holders", 0) or 0)
+                    # Blockscout uses "holders_count" (string) in TokenInfo
+                    raw = data.get("holders_count") or data.get("holders") or 0
+                    count = int(raw)
                     if count > 0:
                         logger.info(f"Blockscout holder count: {count}")
                         _cache[cache_key] = count
@@ -251,8 +253,10 @@ class DataFetcher:
                     items = data.get("items", [])
                     holders = []
                     for item in items[:limit]:
+                        # Blockscout uses "address_hash" (or "address") object with "hash" field
+                        addr_obj = item.get("address_hash") or item.get("address") or {}
                         holder = {
-                            "address": item.get("address", {}).get("hash", ""),
+                            "address": addr_obj.get("hash", ""),
                             "value": item.get("value", "0"),
                         }
                         holders.append(holder)
