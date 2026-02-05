@@ -133,7 +133,9 @@ class ERC8004Service:
 
             # Sign and send transaction
             signed_tx = self.w3.eth.account.sign_transaction(tx, self.settings.private_key)
-            tx_hash = self.w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+            # Compatible with both old (rawTransaction) and new (raw_transaction) web3.py
+            raw_tx = getattr(signed_tx, 'raw_transaction', None) or signed_tx.rawTransaction
+            tx_hash = self.w3.eth.send_raw_transaction(raw_tx)
 
             # Wait for receipt
             receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash)
