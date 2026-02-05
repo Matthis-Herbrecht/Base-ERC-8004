@@ -134,9 +134,9 @@ class TokenAnalyzer:
             return 0.0
 
         try:
-            # Get top holder balance
-            if holders:
-                top_balance = int(holders[0].get("TokenHolderQuantity", 0))
+            # Blockscout returns 'value' as raw token amount string
+            top_balance = int(holders[0].get("value", 0))
+            if top_balance > 0 and total_supply > 0:
                 return (top_balance / total_supply) * 100
             return 0.0
         except Exception as e:

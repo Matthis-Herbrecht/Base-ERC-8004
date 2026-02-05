@@ -24,6 +24,8 @@ class DataFetcher:
         self.etherscan_v2_url = "https://api.etherscan.io/v2/api"
         self.chain_id = "8453"  # Base mainnet
         self.coingecko_base_url = "https://api.coingecko.com/api/v3"
+        # Blockscout API for Base (free, no API key needed)
+        self.blockscout_base_url = "https://base.blockscout.com/api/v2"
 
     def _get_cache_key(self, prefix: str, *args) -> str:
         """Generate cache key."""
@@ -40,12 +42,35 @@ class DataFetcher:
 
     async def get_holder_count(self, token_address: str) -> int:
         """
-        Get token holder count estimate from transfer events.
+        Get token holder count from Blockscout API.
+        Falls back to Etherscan transfer estimation if Blockscout fails.
         """
         cache_key = self._get_cache_key("holders", token_address)
         if cache_key in _cache:
             return _cache[cache_key]
 
+        # Primary: Blockscout API (provides actual holder count)
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                url = f"{self.blockscout_base_url}/tokens/{token_address}"
+                logger.info(f"Fetching holder count from Blockscout for {token_address}")
+                response = await client.get(url)
+
+                if response.status_code == 200:
+                    data = response.json()
+                    count = int(data.get("holders", 0) or 0)
+                    if count > 0:
+                        logger.info(f"Blockscout holder count: {count}")
+                        _cache[cache_key] = count
+                        return count
+                    else:
+                        logger.warning(f"Blockscout returned 0 holders for {token_address}")
+                else:
+                    logger.warning(f"Blockscout API returned status {response.status_code}")
+        except Exception as e:
+            logger.error(f"Blockscout holder count failed: {e}")
+
+        # Fallback: Etherscan V2 transfer estimation
         try:
             params = {
                 "module": "account",
@@ -56,13 +81,10 @@ class DataFetcher:
                 "sort": "desc",
             }
 
-            logger.info(f"Fetching transfers for {token_address}")
+            logger.info(f"Falling back to Etherscan transfers for {token_address}")
             data = await self._make_etherscan_request(params)
 
-            logger.info(f"Transfer response status: {data.get('status')}, message: {data.get('message')}")
-
             if data.get("status") == "1" and data.get("result"):
-                # Count unique addresses from transfers
                 addresses = set()
                 for tx in data.get("result", []):
                     to_addr = tx.get("to", "").lower()
@@ -73,11 +95,9 @@ class DataFetcher:
                         addresses.add(from_addr)
 
                 count = len(addresses)
-                logger.info(f"Estimated {count} holders from transfers")
+                logger.info(f"Estimated {count} holders from Etherscan transfers")
                 _cache[cache_key] = count
                 return count
-            else:
-                logger.warning(f"No transfer data: {data.get('message', 'Unknown error')}")
 
             return 0
         except Exception as e:
@@ -212,8 +232,41 @@ class DataFetcher:
             return 0
 
     async def get_top_holders(self, token_address: str, limit: int = 10) -> List[Dict[str, Any]]:
-        """Get top token holders - requires PRO API."""
-        return []
+        """
+        Get top token holders from Blockscout API.
+        Returns list of dicts with 'address' and 'value' keys.
+        """
+        cache_key = self._get_cache_key("top_holders", token_address)
+        if cache_key in _cache:
+            return _cache[cache_key]
+
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                url = f"{self.blockscout_base_url}/tokens/{token_address}/holders"
+                logger.info(f"Fetching top holders from Blockscout for {token_address}")
+                response = await client.get(url)
+
+                if response.status_code == 200:
+                    data = response.json()
+                    items = data.get("items", [])
+                    holders = []
+                    for item in items[:limit]:
+                        holder = {
+                            "address": item.get("address", {}).get("hash", ""),
+                            "value": item.get("value", "0"),
+                        }
+                        holders.append(holder)
+
+                    logger.info(f"Got {len(holders)} top holders from Blockscout")
+                    _cache[cache_key] = holders
+                    return holders
+                else:
+                    logger.warning(f"Blockscout holders API returned status {response.status_code}")
+
+            return []
+        except Exception as e:
+            logger.error(f"Failed to get top holders: {e}")
+            return []
 
     async def get_token_price_coingecko(self, token_address: str) -> Optional[float]:
         """Get token price from CoinGecko."""
