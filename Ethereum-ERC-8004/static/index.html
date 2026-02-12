@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EthereumTokenScout - Analyseur de Tokens ERC-20</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            color: #e4e4e4;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            background: linear-gradient(90deg, #627eea, #9945FF);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: #888;
+            font-size: 1.1rem;
+        }
+
+        .chain-badge {
+            display: inline-block;
+            background: linear-gradient(90deg, #627eea, #8c6dfd);
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            margin-top: 10px;
+        }
+
+        .search-box {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 30px;
+            margin-bottom: 30px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+        }
+
+        input[type="text"] {
+            flex: 1;
+            padding: 15px 20px;
+            border: 2px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            background: rgba(0, 0, 0, 0.3);
+            color: #fff;
+            font-size: 1rem;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #627eea;
+        }
+
+        input[type="text"]::placeholder {
+            color: #666;
+        }
+
+        button {
+            padding: 15px 30px;
+            background: linear-gradient(90deg, #627eea, #9945FF);
+            border: none;
+            border-radius: 12px;
+            color: #fff;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(98, 126, 234, 0.3);
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .quick-tokens {
+            margin-top: 15px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .quick-token {
+            padding: 8px 16px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            color: #aaa;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .quick-token:hover {
+            background: rgba(98, 126, 234, 0.2);
+            border-color: #627eea;
+            color: #fff;
+        }
+
+        .results {
+            display: none;
+        }
+
+        .results.visible {
+            display: block;
+            animation: fadeIn 0.5s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .score-card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 30px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            text-align: center;
+        }
+
+        .token-name {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .token-address {
+            color: #666;
+            font-size: 0.85rem;
+            word-break: break-all;
+            margin-bottom: 20px;
+        }
+
+        .score-circle {
+            width: 150px;
+            height: 150px;
+            border-radius: 50%;
+            margin: 20px auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 3rem;
+            font-weight: 700;
+            position: relative;
+        }
+
+        .score-circle::before {
+            content: '';
+            position: absolute;
+            inset: -4px;
+            border-radius: 50%;
+            padding: 4px;
+            background: linear-gradient(135deg, var(--score-color), transparent);
+            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+            -webkit-mask-composite: xor;
+            mask-composite: exclude;
+        }
+
+        .score-label {
+            font-size: 1rem;
+            color: #888;
+            margin-top: 10px;
+        }
+
+        .risk-badge {
+            display: inline-block;
+            padding: 8px 20px;
+            border-radius: 20px;
+            font-weight: 600;
+            margin-top: 15px;
+        }
+
+        .risk-scam { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+        .risk-high_risk { background: rgba(249, 115, 22, 0.2); color: #f97316; }
+        .risk-moderate { background: rgba(234, 179, 8, 0.2); color: #eab308; }
+        .risk-quality { background: rgba(34, 197, 94, 0.2); color: #22c55e; }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .metric-card {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .metric-label {
+            color: #888;
+            font-size: 0.85rem;
+            margin-bottom: 5px;
+        }
+
+        .metric-value {
+            font-size: 1.3rem;
+            font-weight: 600;
+        }
+
+        .red-flags {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .red-flags h3 {
+            color: #ef4444;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .flag-item {
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .flag-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .flag-severity {
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .flag-severity.high { background: #ef4444; color: #fff; }
+        .flag-severity.medium { background: #f97316; color: #fff; }
+        .flag-severity.low { background: #eab308; color: #000; }
+
+        .analysis-box {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .analysis-box h3 {
+            margin-bottom: 15px;
+            color: #627eea;
+        }
+
+        .analysis-text {
+            line-height: 1.6;
+            color: #ccc;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-top-color: #627eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .error {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+            color: #ef4444;
+        }
+
+        footer {
+            text-align: center;
+            margin-top: 40px;
+            color: #666;
+            font-size: 0.9rem;
+        }
+
+        footer a {
+            color: #627eea;
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>EthereumTokenScout</h1>
+            <p class="subtitle">Agent IA ERC-8004 pour l'analyse de tokens</p>
+            <span class="chain-badge">Ethereum Mainnet</span>
+        </header>
+
+        <div class="search-box">
+            <div class="input-group">
+                <input type="text" id="tokenAddress" placeholder="Entrez l'adresse du token (0x...)">
+                <button onclick="analyzeToken()" id="analyzeBtn">Analyser</button>
+            </div>
+            <div class="quick-tokens">
+                <span class="quick-token" onclick="setToken('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48')">USDC</span>
+                <span class="quick-token" onclick="setToken('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2')">WETH</span>
+                <span class="quick-token" onclick="setToken('0x6B175474E89094C44Da98b954EescdeCB5BE3830')">DAI</span>
+                <span class="quick-token" onclick="setToken('0x514910771AF9Ca656af840dff83E8264EcF986CA')">LINK</span>
+            </div>
+        </div>
+
+        <div id="loading" class="loading" style="display: none;">
+            <div class="spinner"></div>
+            <p>Analyse en cours...</p>
+        </div>
+
+        <div id="error" class="error" style="display: none;"></div>
+
+        <div id="results" class="results">
+            <div class="score-card">
+                <div class="token-name" id="tokenName">-</div>
+                <div class="token-address" id="tokenAddr">-</div>
+                <div class="score-circle" id="scoreCircle">
+                    <span id="scoreValue">-</span>
+                </div>
+                <div class="score-label">Score de Qualite</div>
+                <div class="risk-badge" id="riskBadge">-</div>
+            </div>
+
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-label">Holders</div>
+                    <div class="metric-value" id="metricHolders">-</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Liquidite</div>
+                    <div class="metric-value" id="metricLiquidity">-</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Volume 24h</div>
+                    <div class="metric-value" id="metricVolume">-</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Age</div>
+                    <div class="metric-value" id="metricAge">-</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Verifie</div>
+                    <div class="metric-value" id="metricVerified">-</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Top Holder</div>
+                    <div class="metric-value" id="metricTopHolder">-</div>
+                </div>
+            </div>
+
+            <div id="redFlags" class="red-flags" style="display: none;">
+                <h3>Alertes</h3>
+                <div id="flagsList"></div>
+            </div>
+
+            <div class="analysis-box">
+                <h3>Analyse</h3>
+                <p class="analysis-text" id="analysisText">-</p>
+            </div>
+        </div>
+
+        <footer>
+            <p>Agent ERC-8004 sur Ethereum | <a href="/docs">API Documentation</a></p>
+        </footer>
+    </div>
+
+    <script>
+        function setToken(address) {
+            document.getElementById('tokenAddress').value = address;
+            analyzeToken();
+        }
+
+        async function analyzeToken() {
+            const address = document.getElementById('tokenAddress').value.trim();
+            if (!address || !address.startsWith('0x') || address.length !== 42) {
+                showError('Veuillez entrer une adresse Ethereum valide (0x...)');
+                return;
+            }
+
+            showLoading();
+
+            try {
+                const response = await fetch(`/api/analyze/${address}`);
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail?.message || data.message || 'Erreur lors de l\'analyse');
+                }
+
+                displayResults(data);
+            } catch (error) {
+                showError(error.message);
+            }
+        }
+
+        function showLoading() {
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('error').style.display = 'none';
+            document.getElementById('results').classList.remove('visible');
+            document.getElementById('analyzeBtn').disabled = true;
+        }
+
+        function showError(message) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('error').style.display = 'block';
+            document.getElementById('error').textContent = message;
+            document.getElementById('results').classList.remove('visible');
+            document.getElementById('analyzeBtn').disabled = false;
+        }
+
+        function displayResults(data) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('error').style.display = 'none';
+            document.getElementById('analyzeBtn').disabled = false;
+
+            // Token info
+            document.getElementById('tokenName').textContent = `${data.name} (${data.symbol})`;
+            document.getElementById('tokenAddr').textContent = data.address;
+
+            // Score
+            const score = data.score;
+            document.getElementById('scoreValue').textContent = score;
+            const scoreCircle = document.getElementById('scoreCircle');
+            let scoreColor;
+            if (score >= 70) scoreColor = '#22c55e';
+            else if (score >= 50) scoreColor = '#eab308';
+            else if (score >= 30) scoreColor = '#f97316';
+            else scoreColor = '#ef4444';
+            scoreCircle.style.setProperty('--score-color', scoreColor);
+            scoreCircle.style.background = `rgba(${hexToRgb(scoreColor)}, 0.1)`;
+
+            // Risk badge
+            const riskBadge = document.getElementById('riskBadge');
+            const riskLabels = {
+                'scam': 'Arnaque Potentielle',
+                'high_risk': 'Risque Eleve',
+                'moderate': 'Risque Modere',
+                'quality': 'Token de Qualite'
+            };
+            riskBadge.textContent = riskLabels[data.risk_level] || data.risk_level;
+            riskBadge.className = `risk-badge risk-${data.risk_level}`;
+
+            // Metrics
+            document.getElementById('metricHolders').textContent = data.metrics.holders.toLocaleString();
+            document.getElementById('metricLiquidity').textContent = `$${formatNumber(data.metrics.liquidity_usd)}`;
+            document.getElementById('metricVolume').textContent = `$${formatNumber(data.metrics.volume_24h_usd)}`;
+            document.getElementById('metricAge').textContent = `${data.metrics.contract_age_days} jours`;
+            document.getElementById('metricVerified').textContent = data.metrics.is_verified ? 'Oui' : 'Non';
+            document.getElementById('metricTopHolder').textContent = `${data.metrics.top_holder_percentage.toFixed(2)}%`;
+
+            // Red flags
+            const redFlagsDiv = document.getElementById('redFlags');
+            const flagsList = document.getElementById('flagsList');
+            if (data.red_flags && data.red_flags.length > 0) {
+                redFlagsDiv.style.display = 'block';
+                flagsList.innerHTML = data.red_flags.map(flag => `
+                    <div class="flag-item">
+                        <span class="flag-severity ${flag.severity}">${flag.severity}</span>
+                        <span>${flag.description}</span>
+                    </div>
+                `).join('');
+            } else {
+                redFlagsDiv.style.display = 'none';
+            }
+
+            // Analysis
+            document.getElementById('analysisText').textContent = data.analysis;
+
+            // Show results
+            document.getElementById('results').classList.add('visible');
+        }
+
+        function formatNumber(num) {
+            if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+            if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+            return num.toFixed(2);
+        }
+
+        function hexToRgb(hex) {
+            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ?
+                `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` :
+                '255, 255, 255';
+        }
+
+        // Allow Enter key to trigger analysis
+        document.getElementById('tokenAddress').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') analyzeToken();
+        });
+    </script>
+</body>
+</html>

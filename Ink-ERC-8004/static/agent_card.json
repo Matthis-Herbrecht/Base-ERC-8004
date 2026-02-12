@@ -1,0 +1,36 @@
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareAgent",
+  "name": "InkTokenScout",
+  "description": "AI agent for analyzing ERC-20 token quality and risk on Ink blockchain",
+  "version": "1.0.0",
+  "capabilities": [
+    {
+      "name": "token_analysis",
+      "description": "Analyze ERC-20 tokens for quality and risk assessment",
+      "endpoint": "/api/analyze/{token_address}",
+      "method": "GET",
+      "parameters": {
+        "token_address": {
+          "type": "string",
+          "description": "Ink address of the ERC-20 token",
+          "required": true
+        }
+      }
+    },
+    {
+      "name": "trending_tokens",
+      "description": "Get list of trending tokens",
+      "endpoint": "/api/trending",
+      "method": "GET"
+    }
+  ],
+  "pricing": {
+    "model": "free",
+    "rateLimit": "10 requests/minute"
+  },
+  "chain": {
+    "name": "Ink",
+    "chainId": 57073
+  }
+}

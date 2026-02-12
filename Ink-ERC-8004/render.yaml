@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: inktokenscout
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: INK_RPC_URL
+        value: https://rpc-gel.inkonchain.com
+      - key: IDENTITY_REGISTRY
+        value: "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432"
+      - key: REPUTATION_REGISTRY
+        value: "0x8004BAa17C55a88189AE136b182e5fdA19dE9b63"
+    healthCheckPath: /health
+    autoDeploy: true
