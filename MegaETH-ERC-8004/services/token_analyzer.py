@@ -1,202 +1,268 @@
-"""Token analysis service for MegaETH."""
+"""Token analysis service."""
 
-from typing import Optional
+import logging
+from typing import List, Dict, Any
 from datetime import datetime
 
-from app.models import TokenAnalysis, TokenMetrics, RiskLevel, RedFlag
+from app.models import TokenAnalysis, TokenMetrics, RedFlag, RiskLevel
 from services.blockchain import BlockchainService
 from services.data_fetcher import DataFetcher
 
+logger = logging.getLogger(__name__)
+
 
 class TokenAnalyzer:
-    """Analyzes ERC-20 tokens on MegaETH."""
+    """Service for comprehensive token analysis."""
 
     def __init__(self):
+        """Initialize token analyzer."""
         self.blockchain = BlockchainService()
         self.data_fetcher = DataFetcher()
 
+        # Scoring weights (total = 100)
+        self.weights = {
+            "holders": 20,
+            "liquidity": 25,
+            "volume": 15,
+            "age": 15,
+            "verified": 10,
+            "distribution": 15,
+        }
+
     async def analyze(self, token_address: str) -> TokenAnalysis:
-        """Perform comprehensive token analysis."""
-        # Get on-chain data
+        """
+        Perform comprehensive token analysis.
+
+        Args:
+            token_address: The token contract address
+
+        Returns:
+            TokenAnalysis with score, metrics, and red flags
+        """
+        # Get basic token info from blockchain
         token_info = self.blockchain.get_token_info(token_address)
-        if not token_info:
-            raise ValueError(f"Token not found: {token_address}")
 
-        # Get off-chain data
-        blockscout_data = await self.data_fetcher.get_token_from_blockscout(token_address)
-        holders_data = await self.data_fetcher.get_token_holders(token_address)
+        # Fetch additional data
+        holder_count = await self.data_fetcher.get_holder_count(token_address)
+        is_verified = await self.data_fetcher.is_contract_verified(token_address)
+        contract_age = await self.data_fetcher.get_contract_age_days(token_address)
         top_holders = await self.data_fetcher.get_top_holders(token_address)
-        contract_info = await self.data_fetcher.get_contract_info(token_address)
         dex_data = await self.data_fetcher.get_dex_data(token_address)
-        token_age = await self.data_fetcher.get_token_age_days(token_address)
+        price = await self.data_fetcher.get_token_price_coingecko(token_address)
 
-        # Extract metrics
-        holders = 0
-        if holders_data:
-            holders = int(holders_data.get("token_holders_count") or holders_data.get("holders_count") or 0)
-
-        liquidity_usd = 0.0
-        volume_24h = 0.0
-        price_usd = None
-        market_cap = None
-
-        if dex_data:
-            liquidity_usd = float(dex_data.get("liquidity", {}).get("usd", 0) or 0)
-            volume_24h = float(dex_data.get("volume", {}).get("h24", 0) or 0)
-            price_usd = float(dex_data.get("priceUsd", 0) or 0) if dex_data.get("priceUsd") else None
-            if dex_data.get("fdv"):
-                market_cap = float(dex_data.get("fdv", 0) or 0)
-
-        is_verified = False
-        if contract_info:
-            is_verified = contract_info.get("is_verified", False)
+        # Use DEX age as fallback if contract age is 0
+        if contract_age == 0:
+            contract_age = dex_data.get("age_days", 0)
 
         # Calculate top holder percentage
-        top_holder_pct = 0.0
-        if top_holders and len(top_holders) > 0:
-            top_holder = top_holders[0]
-            value = top_holder.get("value")
-            if value and token_info.get("total_supply", 0) > 0:
-                decimals = token_info.get("decimals", 18)
-                holder_balance = int(value) / (10 ** decimals)
-                top_holder_pct = (holder_balance / token_info["total_supply"]) * 100
+        top_holder_pct = self._calculate_top_holder_percentage(
+            top_holders,
+            token_info["total_supply"],
+            token_info["decimals"]
+        )
 
         # Build metrics
         metrics = TokenMetrics(
-            holders=holders,
-            liquidity_usd=liquidity_usd,
-            volume_24h_usd=volume_24h,
-            contract_age_days=token_age,
+            holders=holder_count,
+            volume_24h_usd=dex_data.get("volume_24h_usd", 0),
+            liquidity_usd=dex_data.get("liquidity_usd", 0),
+            contract_age_days=contract_age,
             is_verified=is_verified,
-            top_holder_percentage=min(top_holder_pct, 100)
+            top_holder_percentage=round(top_holder_pct, 2)
         )
 
-        # Identify red flags
-        red_flags = []
+        # Calculate score and detect red flags
+        score, red_flags = self._calculate_score(metrics)
 
-        if holders < 10:
-            red_flags.append(RedFlag(description="Very few holders (<10)", severity="high"))
-        elif holders < 50:
-            red_flags.append(RedFlag(description="Low holder count (<50)", severity="medium"))
+        # Determine risk level
+        risk_level = self._get_risk_level(score)
 
-        if liquidity_usd < 1000:
-            red_flags.append(RedFlag(description="Very low liquidity (<$1,000)", severity="critical"))
-        elif liquidity_usd < 10000:
-            red_flags.append(RedFlag(description="Low liquidity (<$10,000)", severity="high"))
+        # Generate analysis summary
+        analysis = self._generate_analysis(
+            token_info["symbol"],
+            score,
+            risk_level,
+            metrics,
+            red_flags
+        )
 
-        if not is_verified:
-            red_flags.append(RedFlag(description="Contract not verified", severity="medium"))
-
-        if top_holder_pct > 50:
-            red_flags.append(RedFlag(description=f"High concentration: top holder owns {top_holder_pct:.1f}%", severity="critical"))
-        elif top_holder_pct > 20:
-            red_flags.append(RedFlag(description=f"Moderate concentration: top holder owns {top_holder_pct:.1f}%", severity="medium"))
-
-        if token_age < 7:
-            red_flags.append(RedFlag(description="Very new token (<7 days)", severity="high"))
-        elif token_age < 30:
-            red_flags.append(RedFlag(description="New token (<30 days)", severity="low"))
-
-        # Calculate score
-        score = self._calculate_score(metrics, red_flags)
-        risk_level = self._determine_risk_level(score, red_flags)
-
-        # Generate analysis
-        analysis = self._generate_analysis(token_info, metrics, red_flags, score)
+        # Calculate market cap if price available
+        market_cap = None
+        if price and price > 0:
+            supply_float = token_info["total_supply"] / (10 ** token_info["decimals"])
+            market_cap = price * supply_float
 
         return TokenAnalysis(
-            contract_address=token_address,
+            address=token_address,
             name=token_info["name"],
             symbol=token_info["symbol"],
+            decimals=token_info["decimals"],
+            total_supply=token_info["total_supply_formatted"],
             score=score,
             risk_level=risk_level,
             metrics=metrics,
             red_flags=red_flags,
             analysis=analysis,
-            price_usd=price_usd,
+            price_usd=price or dex_data.get("price_usd"),
             market_cap_usd=market_cap,
             analyzed_at=datetime.utcnow()
         )
 
-    def _calculate_score(self, metrics: TokenMetrics, red_flags: list) -> int:
-        """Calculate quality score from 0-100."""
-        score = 50  # Base score
+    def _calculate_top_holder_percentage(
+        self, holders: List[dict], total_supply: int, decimals: int
+    ) -> float:
+        """Calculate percentage held by top holder."""
+        if not holders or total_supply == 0:
+            return 0.0
 
-        # Holder score (max +20)
-        if metrics.holders >= 1000:
-            score += 20
+        try:
+            # Blockscout returns 'value' as raw token amount string
+            top_balance = int(holders[0].get("value", 0))
+            if top_balance > 0 and total_supply > 0:
+                return (top_balance / total_supply) * 100
+            return 0.0
+        except Exception as e:
+            logger.error(f"Error calculating top holder percentage: {e}")
+            return 0.0
+
+    def _calculate_score(self, metrics: TokenMetrics) -> tuple[int, List[RedFlag]]:
+        """Calculate quality score and detect red flags."""
+        score = 0
+        red_flags = []
+
+        # Holders score (20 points)
+        if metrics.holders >= 10000:
+            score += self.weights["holders"]
+        elif metrics.holders >= 1000:
+            score += int(self.weights["holders"] * 0.8)
         elif metrics.holders >= 100:
-            score += 10
+            score += int(self.weights["holders"] * 0.5)
         elif metrics.holders >= 10:
-            score += 5
-
-        # Liquidity score (max +20)
-        if metrics.liquidity_usd >= 100000:
-            score += 20
-        elif metrics.liquidity_usd >= 10000:
-            score += 10
-        elif metrics.liquidity_usd >= 1000:
-            score += 5
-
-        # Verification bonus
-        if metrics.is_verified:
-            score += 10
-
-        # Age bonus (max +10)
-        if metrics.contract_age_days >= 365:
-            score += 10
-        elif metrics.contract_age_days >= 90:
-            score += 5
-
-        # Red flag penalties
-        for flag in red_flags:
-            if flag.severity == "critical":
-                score -= 25
-            elif flag.severity == "high":
-                score -= 15
-            elif flag.severity == "medium":
-                score -= 5
-
-        return max(0, min(100, score))
-
-    def _determine_risk_level(self, score: int, red_flags: list) -> RiskLevel:
-        """Determine risk level from score and flags."""
-        critical_flags = [f for f in red_flags if f.severity == "critical"]
-        if critical_flags or score < 20:
-            return RiskLevel.CRITICAL
-        elif score < 40:
-            return RiskLevel.HIGH
-        elif score < 60:
-            return RiskLevel.MEDIUM
-        return RiskLevel.LOW
-
-    def _generate_analysis(self, token_info: dict, metrics: TokenMetrics, red_flags: list, score: int) -> str:
-        """Generate human-readable analysis."""
-        name = token_info["name"]
-        parts = []
-
-        if score >= 60:
-            parts.append(f"{name} shows reasonable metrics for a MegaETH token.")
-        elif score >= 40:
-            parts.append(f"{name} has some concerning indicators that warrant caution.")
+            score += int(self.weights["holders"] * 0.2)
         else:
-            parts.append(f"{name} shows multiple high-risk indicators.")
+            red_flags.append(RedFlag(
+                code="VERY_FEW_HOLDERS",
+                description=f"Only {metrics.holders} holders detected",
+                severity="high"
+            ))
 
-        if metrics.holders < 50:
-            parts.append(f"Limited holder base ({metrics.holders} holders).")
+        # Liquidity score (25 points)
+        if metrics.liquidity_usd >= 1000000:
+            score += self.weights["liquidity"]
+        elif metrics.liquidity_usd >= 100000:
+            score += int(self.weights["liquidity"] * 0.8)
+        elif metrics.liquidity_usd >= 10000:
+            score += int(self.weights["liquidity"] * 0.5)
+        elif metrics.liquidity_usd >= 1000:
+            score += int(self.weights["liquidity"] * 0.2)
+        else:
+            red_flags.append(RedFlag(
+                code="LOW_LIQUIDITY",
+                description=f"Liquidity only ${metrics.liquidity_usd:,.0f}",
+                severity="high"
+            ))
 
-        if metrics.liquidity_usd < 10000:
-            parts.append(f"Low liquidity (${metrics.liquidity_usd:,.0f}).")
+        # Volume score (15 points)
+        if metrics.volume_24h_usd >= 100000:
+            score += self.weights["volume"]
+        elif metrics.volume_24h_usd >= 10000:
+            score += int(self.weights["volume"] * 0.7)
+        elif metrics.volume_24h_usd >= 1000:
+            score += int(self.weights["volume"] * 0.4)
+        else:
+            red_flags.append(RedFlag(
+                code="LOW_VOLUME",
+                description=f"24h volume only ${metrics.volume_24h_usd:,.0f}",
+                severity="medium"
+            ))
 
-        if not metrics.is_verified:
-            parts.append("Contract source code is not verified.")
+        # Age score (15 points)
+        if metrics.contract_age_days >= 365:
+            score += self.weights["age"]
+        elif metrics.contract_age_days >= 180:
+            score += int(self.weights["age"] * 0.8)
+        elif metrics.contract_age_days >= 30:
+            score += int(self.weights["age"] * 0.5)
+        elif metrics.contract_age_days >= 7:
+            score += int(self.weights["age"] * 0.2)
+        else:
+            red_flags.append(RedFlag(
+                code="VERY_NEW_TOKEN",
+                description=f"Contract only {metrics.contract_age_days} days old",
+                severity="medium"
+            ))
 
-        if metrics.top_holder_percentage > 20:
-            parts.append(f"Top holder concentration is {metrics.top_holder_percentage:.1f}%.")
+        # Verification score (10 points)
+        if metrics.is_verified:
+            score += self.weights["verified"]
+        else:
+            red_flags.append(RedFlag(
+                code="UNVERIFIED_CONTRACT",
+                description="Contract source code is not verified",
+                severity="medium"
+            ))
 
-        return " ".join(parts)
+        # Distribution score (15 points)
+        if metrics.top_holder_percentage <= 5:
+            score += self.weights["distribution"]
+        elif metrics.top_holder_percentage <= 10:
+            score += int(self.weights["distribution"] * 0.8)
+        elif metrics.top_holder_percentage <= 20:
+            score += int(self.weights["distribution"] * 0.5)
+        elif metrics.top_holder_percentage <= 50:
+            score += int(self.weights["distribution"] * 0.2)
+            red_flags.append(RedFlag(
+                code="HIGH_CONCENTRATION",
+                description=f"Top holder owns {metrics.top_holder_percentage:.1f}%",
+                severity="medium"
+            ))
+        else:
+            red_flags.append(RedFlag(
+                code="EXTREME_CONCENTRATION",
+                description=f"Top holder owns {metrics.top_holder_percentage:.1f}%",
+                severity="high"
+            ))
 
+        return min(100, max(0, score)), red_flags
 
-def get_token_analyzer() -> TokenAnalyzer:
-    """Get token analyzer instance."""
-    return TokenAnalyzer()
+    def _get_risk_level(self, score: int) -> RiskLevel:
+        """Determine risk level from score."""
+        if score < 30:
+            return RiskLevel.SCAM
+        elif score < 50:
+            return RiskLevel.HIGH_RISK
+        elif score < 70:
+            return RiskLevel.MODERATE
+        else:
+            return RiskLevel.QUALITY
+
+    def _generate_analysis(
+        self,
+        symbol: str,
+        score: int,
+        risk_level: RiskLevel,
+        metrics: TokenMetrics,
+        red_flags: List[RedFlag]
+    ) -> str:
+        """Generate human-readable analysis summary."""
+        risk_descriptions = {
+            RiskLevel.SCAM: "This token shows numerous high-risk signs and could be a scam.",
+            RiskLevel.HIGH_RISK: "This token shows several important risk indicators.",
+            RiskLevel.MODERATE: "This token shows some risks but appears relatively established.",
+            RiskLevel.QUALITY: "This token shows solid quality indicators."
+        }
+
+        analysis = f"{symbol} scored {score}/100. {risk_descriptions[risk_level]}"
+
+        if metrics.holders > 0:
+            analysis += f" The token has {metrics.holders:,} holders."
+
+        if metrics.liquidity_usd > 0:
+            analysis += f" Liquidity: ${metrics.liquidity_usd:,.0f}."
+
+        if red_flags:
+            high_severity = [f.description for f in red_flags if f.severity == "high"]
+            if high_severity:
+                analysis += f" Critical alerts: {'; '.join(high_severity)}"
+
+        return analysis
