@@ -1,0 +1,1 @@
+"""MegaETHTokenScout app package."""
